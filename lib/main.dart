@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
+import 'profile_service.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -37,6 +38,8 @@ class MyHomePage extends StatefulWidget {
   State<MyHomePage> createState() => _MyHomePageState();
 }
 
+final ProfileService _profileService = ProfileService();
+
 class _MyHomePageState extends State<MyHomePage> {
   // 🟢 1. 로딩 상태를 추적할 변수 추가 (기본값: true)
   bool _isLoading = true;
@@ -46,11 +49,13 @@ class _MyHomePageState extends State<MyHomePage> {
 
   // 스프링 부트 서버의 주소 (중요!)
   final String springBootUrl =
-      '';
+      'https://decompressive-xavi-unanimated.ngrok-free.dev/';
 
   @override
   void initState() {
     super.initState();
+    WebViewController().clearCache();
+    WebViewController().clearLocalStorage();
 
     //로딩 상태를 3초 동안 강제로 true로 유지
     Future.delayed(const Duration(seconds: 3), () {
@@ -65,6 +70,16 @@ class _MyHomePageState extends State<MyHomePage> {
     controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(const Color(0x00000000))
+      ..addJavaScriptChannel(
+        'ToFlutter', // JS 코드의 window.ToFlutter와 일치
+        onMessageReceived: (JavaScriptMessage message) {
+          if (message.message == 'START_UPLOAD_FLOW') {
+            // JS에서 보낸 메시지 확인
+            debugPrint('Flutter: 웹뷰로부터 업로드 시작 요청 받음');
+            _handleImagePickAndUpload(); // 갤러리 열기 및 업로드 함수 호출
+          }
+        },
+      )
       ..setNavigationDelegate(
         NavigationDelegate(
           onProgress: (int progress) {
@@ -106,6 +121,23 @@ class _MyHomePageState extends State<MyHomePage> {
         ),
       )
       ..loadRequest(Uri.parse(springBootUrl)); // 서버 주소 로드
+  }
+
+  Future<void> _handleImagePickAndUpload() async {
+    String? newUrl = await _profileService.uploadProfileImage();
+
+    if (newUrl != null) {
+      final String serverBaseUrl =
+          'https://decompressive-xavi-unanimated.ngrok-free.dev';
+      String absoluteUrl = newUrl.startsWith('http')
+          ? newUrl
+          : serverBaseUrl + newUrl;
+
+      // 웹뷰의 JS 함수 호출하여 UI 업데이트
+      controller.runJavaScript('updateProfileImage("$absoluteUrl");');
+    } else {
+      debugPrint('Flutter: 이미지 업로드 실패');
+    }
   }
 
   @override
