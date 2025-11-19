@@ -47,9 +47,12 @@ class _MyHomePageState extends State<MyHomePage> {
   // 웹뷰 컨트롤러 생성
   late final WebViewController controller;
 
-  // 스프링 부트 서버의 주소 (중요!)
+
+  //안드로이드 시뮬레이션 'http://10.0.2.2:9090/';
+  //웹,IOS ex>'http://localhost:9090/';
+  //실제기기,웹에서 테스트시 서버의 실제 IP주소,도메인 사용
   final String springBootUrl =
-      'https://decompressive-xavi-unanimated.ngrok-free.dev/';
+      'http://10.0.2.2:9090/';
 
   @override
   void initState() {
@@ -128,7 +131,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
     if (newUrl != null) {
       final String serverBaseUrl =
-          'https://decompressive-xavi-unanimated.ngrok-free.dev';
+          'http://10.0.2.2:9090/';
       String absoluteUrl = newUrl.startsWith('http')
           ? newUrl
           : serverBaseUrl + newUrl;
@@ -154,10 +157,46 @@ class _MyHomePageState extends State<MyHomePage> {
           if (_isLoading)
             const Center(
               child: CircularProgressIndicator(
-                color: Color(0xFFDD0101), // 네이티브 앱 색상에 맞춰 색상 변경 가능
+                color: Color(0xFFDD0101),
               ),
             ),
         ],
+      ),
+
+      bottomNavigationBar: BottomAppBar(
+        color: const Color(0xFF040F16), // 앱바 배경색 설정
+        height: 60.0, // 앱바 높이 설정 (원하는 대로 조정 가능)
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          children: <Widget>[
+            //홈버튼
+            IconButton(
+              icon: const Icon(Icons.home, color: Colors.white),
+              onPressed: () {
+                // TODO: 홈 버튼 눌렀을 때 동작
+                print('홈 버튼');
+              },
+            ),
+
+            //뒤로가기 버튼
+            IconButton(
+              icon: const Icon(Icons.arrow_back, color: Colors.white),
+              onPressed: () {
+                // TODO: 뒤로 가기 동작 (예: controller.goBack())
+                print('뒤로 가기 버튼');
+              },
+            ),
+
+            //새로고침
+            IconButton(
+              icon: const Icon(Icons.refresh, color: Colors.white),
+              onPressed: () {
+                // TODO: 새로고침 동작 (예: controller.reload())
+                print('새로고침 버튼');
+              },
+            ),
+          ],
+        ),
       ),
     );
   }

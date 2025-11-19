@@ -5,7 +5,7 @@ class ProfileService {
   final Dio _dio = Dio();
   // 💡 Spring Boot 서버의 파일 업로드 엔드포인트
   final String uploadUrl =
-      "https://decompressive-xavi-unanimated.ngrok-free.dev/api/profile/upload/1"; // 사용자 ID 1 가정
+      "http://10.0.2.2:9090/api/profile/upload/1"; // 사용자 ID 1 가정
 
   // ⭐️ 이미지 선택 및 업로드 함수 ⭐️
   Future<String?> uploadProfileImage() async {
