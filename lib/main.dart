@@ -1,21 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
-import 'package:webview_flutter_android/webview_flutter_android.dart';
-import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
-import 'profile_service.dart';
+import 'package:dio/dio.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:flutter/services.dart';
+import 'SplashPage.dart';
+
+const String mainHome = 'http://10.0.2.2:9090/';
+const int _currentUserId = 1; // 현재 로그인된 사용자 ID 가정
+const String _baseUrl = 'http://10.0.2.2:9090/';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-
-  // 2. 플랫폼별 구현체 등록
-  if (WebViewPlatform.instance is AndroidWebViewPlatform) {
-    AndroidWebViewPlatform.registerWith();
-  }
-  if (WebViewPlatform.instance is WebKitWebViewPlatform) {
-    WebKitWebViewPlatform.registerWith();
-  }
-
-  // 3. runApp 실행
   runApp(const MyApp());
 }
 
@@ -25,177 +20,225 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      // 로딩 스피너가 Material Design을 따르므로, MaterialApp 유지
-      home: const MyHomePage(),
+      title: 'ReviewPlus2.0 Webview',
+      theme: ThemeData(
+        primarySwatch: Colors.blue,
+      ),
+      home: const SplashPage(
+          backgroundColor: Color(0xFF1A1A1A),
+          logoPath: 'assets/logo.png',
+      ),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key});
 
-  @override
-  State<MyHomePage> createState() => _MyHomePageState();
+//프로필 서비스 (Dio 업로드 로직)
+class ProfileService {
+  final Dio _dio = Dio();
+  final String uploadUrl =
+      "$_baseUrl/api/profile/upload/$_currentUserId";
+
+  Future<String?> uploadProfileImage() async {
+    final ImagePicker picker = ImagePicker();
+    final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+    // ... (나머지 Dio 업로드 로직은 이전과 동일하다고 가정)
+
+    if (image == null) return null;
+
+    try {
+      FormData formData = FormData.fromMap({
+        "file": await MultipartFile.fromFile(image.path, filename: image.path.split('/').last),
+        "userId": _currentUserId,
+      });
+
+      Response response = await _dio.post(uploadUrl, data: formData);
+
+      if (response.statusCode == 200 && response.data != null) {
+        Map<String, dynamic> responseData = response.data is String ? {} : response.data;
+        // 서버 응답 형태에 따라 newImageUrl을 추출
+        if (responseData.containsKey('newImageUrl')) {
+          return responseData['newImageUrl'];
+        }
+        return response.data.toString(); // JSON이 아닌 문자열 응답 시
+      }
+      return null;
+    } on DioException catch (e) {
+      print('Dio 에러 발생: ${e.message}');
+      return null;
+    } catch (e) {
+      print('예상치 못한 에러 발생: $e');
+      return null;
+    }
+  }
 }
 
-final ProfileService _profileService = ProfileService();
 
-class _MyHomePageState extends State<MyHomePage> {
-  // 🟢 1. 로딩 상태를 추적할 변수 추가 (기본값: true)
-  bool _isLoading = true;
+// 3. SpringWebViewPage (웹뷰 표시 및 제스처, 버튼 통합)
+class SpringWebViewPage extends StatefulWidget {
+  final String url;
 
-  // 웹뷰 컨트롤러 생성
+  const SpringWebViewPage({super.key, required this.url});
+
+  @override
+  State<SpringWebViewPage> createState() => _SpringWebViewPageState();
+}
+
+class _SpringWebViewPageState extends State<SpringWebViewPage> {
   late final WebViewController controller;
-
-
-  //안드로이드 시뮬레이션 'http://10.0.2.2:9090/';
-  //웹,IOS ex>'http://localhost:9090/';
-  //실제기기,웹에서 테스트시 서버의 실제 IP주소,도메인 사용
-  final String springBootUrl =
-      'http://10.0.2.2:9090/';
+  final ProfileService _profileService = ProfileService();
+  bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
-    WebViewController().clearCache();
-    WebViewController().clearLocalStorage();
 
-    //로딩 상태를 3초 동안 강제로 true로 유지
-    Future.delayed(const Duration(seconds: 3), () {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
-    });
-
-    // WebViewController 초기화
     controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(const Color(0x00000000))
-      ..addJavaScriptChannel(
-        'ToFlutter', // JS 코드의 window.ToFlutter와 일치
-        onMessageReceived: (JavaScriptMessage message) {
-          if (message.message == 'START_UPLOAD_FLOW') {
-            // JS에서 보낸 메시지 확인
-            debugPrint('Flutter: 웹뷰로부터 업로드 시작 요청 받음');
-            _handleImagePickAndUpload(); // 갤러리 열기 및 업로드 함수 호출
-          }
-        },
-      )
+
+    // 페이지 로드가 시작/끝날 때 로딩 상태 업데이트
       ..setNavigationDelegate(
         NavigationDelegate(
-          onProgress: (int progress) {
-            debugPrint('WebView is loading (progress: $progress%)');
+          onPageStarted: (url) {
+            setState(() { _isLoading = true; });
           },
-          onPageStarted: (String url) {
-            debugPrint('Page started loading: $url');
-            //페이지 시작 시 로딩 시작
-            if (mounted) {
-              setState(() {
-                //_isLoading = true;
-              });
-            }
-          },
-          onPageFinished: (String url) {
-            debugPrint('Page finished loading: $url');
-            //페이지 로딩 완료 시 로딩 끝
-            if (mounted) {
-              setState(() {
-                //_isLoading = false;
-              });
-            }
-          },
-          onWebResourceError: (WebResourceError error) {
-            // 에러 발생 시 처리 (에러 발생 시에도 로딩을 false로 바꿔야 함)
-            debugPrint('''
-              Page resource error:
-              code: ${error.errorCode}
-              description: ${error.description}
-              errorType: ${error.errorType}
-              isForMainFrame: ${error.isForMainFrame}
-            ''');
-            if (mounted) {
-              setState(() {
-                _isLoading = false;
-              });
-            }
+          onPageFinished: (url) {
+            setState(() { _isLoading = false; });
           },
         ),
       )
-      ..loadRequest(Uri.parse(springBootUrl)); // 서버 주소 로드
+    // 웹뷰와 Flutter 간의 통신 채널 추가 (프로필 업로드 로직 실행용)
+      ..addJavaScriptChannel(
+        'ProfileChannel',
+        onMessageReceived: (JavaScriptMessage message) {
+          if (message.message == 'upload_start') {
+            _handleProfileUploadAndNotifyWeb();
+          }
+        },
+      )
+      ..loadRequest(Uri.parse(widget.url));
   }
 
-  Future<void> _handleImagePickAndUpload() async {
-    String? newUrl = await _profileService.uploadProfileImage();
-
-    if (newUrl != null) {
-      final String serverBaseUrl =
-          'http://10.0.2.2:9090/';
-      String absoluteUrl = newUrl.startsWith('http')
-          ? newUrl
-          : serverBaseUrl + newUrl;
-
-      // 웹뷰의 JS 함수 호출하여 UI 업데이트
-      controller.runJavaScript('updateProfileImage("$absoluteUrl");');
+  // 뒤로 가기 로직 (버튼 및 스와이프 제스처에서 사용)
+  Future<void> _handleBack() async {
+    if (await controller.canGoBack()) {
+      controller.goBack(); // 웹뷰 내의 방문 기록을 따라 뒤로 이동
+      print('웹뷰 뒤로가기');
     } else {
-      debugPrint('Flutter: 이미지 업로드 실패');
+      print('Flutter 화면 닫기');
+      _showExitDialog();
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        toolbarHeight: 0.0,
-        backgroundColor: const Color(0xFF040F16),
-      ),
-      body: Stack(
-        children: <Widget>[
-          WebViewWidget(controller: controller),
-
-          if (_isLoading)
-            const Center(
-              child: CircularProgressIndicator(
-                color: Color(0xFFDD0101),
-              ),
-            ),
-        ],
-      ),
-
-      bottomNavigationBar: BottomAppBar(
-        color: const Color(0xFF040F16), // 앱바 배경색 설정
-        height: 60.0, // 앱바 높이 설정 (원하는 대로 조정 가능)
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
-          children: <Widget>[
-            //홈버튼
-            IconButton(
-              icon: const Icon(Icons.home, color: Colors.white),
-              onPressed: () {
-                // TODO: 홈 버튼 눌렀을 때 동작
-                print('홈 버튼');
+  void _showExitDialog(){
+    showDialog(
+      context:context,
+      builder: (context){
+        return AlertDialog(
+          title: Text('알림'),
+          content: Text('앱을 종료 하시겠습니까?'),
+          actions:[
+            TextButton(
+              onPressed: (){
+                Navigator.pop(context); //알림창만 닫기
               },
+              child: Text('취소'),
             ),
-
-            //뒤로가기 버튼
-            IconButton(
-              icon: const Icon(Icons.arrow_back, color: Colors.white),
-              onPressed: () {
-                // TODO: 뒤로 가기 동작 (예: controller.goBack())
-                print('뒤로 가기 버튼');
+            TextButton(
+              onPressed: (){
+                Navigator.pop(context);//알림창 닫기
+                SystemNavigator.pop();
+                print('앱 종료');
               },
-            ),
-
-            //새로고침
-            IconButton(
-              icon: const Icon(Icons.refresh, color: Colors.white),
-              onPressed: () {
-                // TODO: 새로고침 동작 (예: controller.reload())
-                print('새로고침 버튼');
-              },
+              child: Text('확인'),
             ),
           ],
+        );
+      },
+    );
+  }
+
+
+  // 홈 버튼 로직 (초기 URL로 돌아가기)
+  Future<void> _handleHome() async {
+    controller.loadRequest(Uri.parse(widget.url)); // 웹뷰의 초기 URL로 돌아가기
+    print('홈 버튼 (웹뷰 초기 URL 로드)');
+  }
+
+  // Flutter Dio 업로드 로직 실행 및 웹뷰에 결과 전달
+  Future<void> _handleProfileUploadAndNotifyWeb() async {
+    String? newUrl = await _profileService.uploadProfileImage();
+
+    if (newUrl != null) {
+      // 업로드 성공 시, 웹뷰의 JS 함수 호출하여 화면 업데이트
+      controller.runJavaScript(
+        "updateProfileImage('$newUrl');",
+      );
+    } else {
+      // 실패 시 웹뷰에 실패 메시지 전달 (선택 사항)
+      controller.runJavaScript("handleUploadFailure('업로드 실패');");
+    }
+  }
+
+
+  @override
+  Widget build(BuildContext context) {
+    // WillPopScope 대신 PopScope를 사용할 수 있지만, 호환성을 위해 WillPopScope로 제스처를 구현합니다.
+    return PopScope(
+      canPop: false, // Flutter의 기본 뒤로 가기 동작을 막고 우리가 _handleBack()에서 처리하도록 설정
+      onPopInvoked: (didPop) async {
+        if (!didPop) {
+          await _handleBack();
+        }
+      },
+      child: GestureDetector(
+        // 🚨 스와이프 제스처 구현: 오른쪽으로 빠르게 드래그할 때 뒤로 가기 실행
+        onHorizontalDragEnd: (details) {
+          // 오른쪽으로 빠르게 스와이프 (속도 임계값 500 사용)
+          if (details.primaryVelocity != null && details.primaryVelocity! > 500) {
+            _handleBack();
+          }
+        },
+        child: Scaffold(
+          appBar: AppBar(
+            toolbarHeight: 0.0,
+            backgroundColor: const Color(0xFF040F16),
+          ),
+          body: Stack(
+            children: <Widget>[
+              // 웹뷰 위젯
+              WebViewWidget(controller: controller),
+
+              // 로딩 인디케이터
+              if (_isLoading)
+                const Center(
+                  child: CircularProgressIndicator(
+                    color: Color(0xFFDD0101),
+                  ),
+                ),
+            ],
+          ),
+
+          bottomNavigationBar: BottomAppBar(
+            color: const Color(0xFF040F16),
+            height: 60.0,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: <Widget>[
+                // 홈 버튼
+                IconButton(
+                  icon: const Icon(Icons.home, color: Colors.white),
+                  onPressed: _handleHome, // 수정된 함수 호출
+                ),
+                // 뒤로 가기 버튼
+                IconButton(
+                  icon: const Icon(Icons.arrow_back, color: Colors.white),
+                  onPressed: _handleBack, // 수정된 함수 호출
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );
