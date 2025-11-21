@@ -7,10 +7,10 @@ import 'package:image_picker/image_picker.dart';
 import 'package:flutter/services.dart';
 import 'SplashPage.dart';
 
-const String mainHome = 'https://decompressive-xavi-unanimated.ngrok-free.dev/';
-const String _baseUrl = 'https://decompressive-xavi-unanimated.ngrok-free.dev/';
+const String mainHome = 'http://10.0.2.2:9090/';
+const String _baseUrl = 'http://10.0.2.2:9090/';
 const String myPageLogin =
-    'https://decompressive-xavi-unanimated.ngrok-free.dev/UserMypage';
+    'http://10.0.2.2:9090/UserMypage';
 const int _currentUserId = 1;
 
 void main() {
