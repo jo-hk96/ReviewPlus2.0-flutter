@@ -2,11 +2,10 @@ import 'package:flutter/material.dart';
 import 'dart:async';
 import 'main.dart';
 
-
 class SplashPage extends StatefulWidget {
-  final Color backgroundColor;   // 배경 색
-  final String logoPath;         // 로고 PNG 경로
-  final Duration duration;       // 스플래시 유지 시간
+  final Color backgroundColor; // 배경 색
+  final String logoPath; // 로고 PNG 경로
+  final Duration duration; // 스플래시 유지 시간
 
   const SplashPage({
     super.key,
@@ -29,7 +28,7 @@ class _SplashPageState extends State<SplashPage> {
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
-          builder: (_) => SpringWebViewPage(url: mainHome),
+          builder: (_) => SpringWebViewPage(url: homeUrl),
         ),
       );
     });

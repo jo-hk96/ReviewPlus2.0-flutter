@@ -1,17 +1,13 @@
-import 'dart:io';
-
+import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'package:webview_flutter/webview_flutter.dart';
 import 'package:flutter/services.dart';
-import 'SplashPage.dart';
-import 'ProfileService.dart';
-import 'dart:convert';
+import 'package:webview_flutter/webview_flutter.dart';
 
-const String mainHome = 'http://10.0.2.2:9090/';
-const String _baseUrl = 'http://10.0.2.2:9090/';
-const String myPageLogin = 'http://10.0.2.2:9090/UserMypage';
-const int _currentUserId = 1;
+import 'profile_service.dart';
+
+const String baseUrl = 'http://10.0.2.2:9090';
+const String homeUrl = '$baseUrl/';
+const String myPageLoginUrl = '$baseUrl/UserMypage';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -24,23 +20,15 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'ReviewPlus2.0 Webview',
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
-      ),
-      home: const SplashPage(
-        backgroundColor: Color(0xFF1A1A1A),
-        logoPath: 'assets/logo.png',
-      ),
+      title: 'ReviewPlus 2.0',
+      theme: ThemeData(primarySwatch: Colors.blue),
+      home: const SpringWebViewPage(url: homeUrl),
     );
   }
 }
 
-
-// ---------------------- WebView Page ----------------------
 class SpringWebViewPage extends StatefulWidget {
   final String url;
-
   const SpringWebViewPage({super.key, required this.url});
 
   @override
@@ -48,203 +36,201 @@ class SpringWebViewPage extends StatefulWidget {
 }
 
 class _SpringWebViewPageState extends State<SpringWebViewPage> {
-  late final WebViewController controller;
-  ProfileService? _profileService; // 👈 널러블로 선언하고 나중에 초기화
-  final String _baseUrl = 'http://10.0.2.2:9090'; // baseUrl은 상수로 빼서 관리
+  late final WebViewController _controller;
 
-  final CookieManager _cookieManager = CookieManager();
-  void _handleLogout() {
-    setState(() {
-      isLoggedIn = false;
-      profileImageUrl = null;
-    });
-  }
+  ProfileService? _profileService;
+  String? _sessionId;
 
   bool _isLoading = true;
-  bool isLoggedIn = false;
-  String? profileImageUrl;
+  bool _isLoggedIn = false;
+  String? _profileImageUrl;
+
   @override
   void initState() {
     super.initState();
-    controller = WebViewController()
+
+    _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(const Color(0x00000000))
+      ..addJavaScriptChannel(
+        'ProfileChannel',
+        onMessageReceived: _onJsMessage,
+      )
       ..setNavigationDelegate(
         NavigationDelegate(
           onPageStarted: (_) => setState(() => _isLoading = true),
-
-            onPageFinished: (String url) async {
-              setState(() => _isLoading = false);
-              final String? extractedJsessionID = await extractJsessionid(controller);
-              if (extractedJsessionID != null && _profileService == null) {
-              _profileService = ProfileService(
-              baseUrl: _baseUrl,
-              currentUserId: '1', // 실제 userId로 대체해야 합니다.
-              jsessionId: extractedJsessionID, // 추출된 쿠키 주입
-              );
-              print('>>> ProfileService 초기화 완료! JSESSIONID: $extractedJsessionID');
-              }
-            },
-          onWebResourceError: (error) {
-            print('*** WebView Resource Error: ${error.errorCode} - ${error.description}');
-            setState(() => _isLoading = false); // 에러가 나면 로딩을 꺼줘야 합니다.
-          },
+          onPageFinished: _onPageFinished,
         ),
       )
-      ..addJavaScriptChannel(
-        'ProfileChannel',
-        onMessageReceived: (JavaScriptMessage message) {
-          if (message.message == 'upload_start') {
-            _handleProfileUploadAndNotifyWeb();
-          } else if (message.message == 'logout_success') {
-            setState(() {
-              isLoggedIn = false;
-              profileImageUrl = null;
-            });
-            _handleLogout();
-          }
-        },
-      )
       ..loadRequest(Uri.parse(widget.url));
-    _fetchUserStatus();
   }
 
-  //사용자 상태
-  Future<void> _fetchUserStatus() async {
-    // Spring의 세션 유효성 검사 API 호출
-    final authCheckUrl = Uri.parse("${_baseUrl}api/user/check-auth");
-    final authResponse = await http.get(authCheckUrl);
+  // -------------------- cookie extract ----------------------------
+  Future<String?> _extractSession() async {
+    try {
+      final result = await _controller.runJavaScriptReturningResult(
+        'document.cookie',
+      );
 
-    if (authResponse.statusCode == 200) {
-      final Map<String, dynamic> data = json.decode(authResponse.body);
+      String cookie = result.toString();
 
-      // 2. ⭐️ 서버에서 인증 상태 및 URL 확인
-      if (data['isAuthenticated'] == true) {
-        String? initialUrl = data['profileImageUrl'];
-
-        setState(() {
-          isLoggedIn = true;
-          profileImageUrl = initialUrl; // 유효한 세션일 경우만 URL 사용
-        });
-        return;
-      }
-    }
-    // 3. 인증 실패 또는 API 오류 시 (로그아웃 상태로 초기화)
-    setState(() {
-      isLoggedIn = false;
-      profileImageUrl = null;
-    });
-  }
-
-  // 뒤로가기
-  Future<void> _handleBack() async {
-    if (await controller.canGoBack()) {
-      controller.goBack();
-    } else {
-      _showExitDialog();
-    }
-  }
-
-  // 종료 확인
-  void _showExitDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('알림'),
-        content: const Text('앱을 종료 하시겠습니까?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('취소'),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              SystemNavigator.pop();
-            },
-            child: const Text('확인'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // 홈 버튼 주소
-  Future<void> _handleHome() async {
-    controller.loadRequest(Uri.parse(mainHome));
-  }
-
-  //myPageLogin
-  void _myPageLogin() {
-    controller.loadRequest(Uri.parse(myPageLogin));
-  }
-
-  // 프로필 업로드 → Javascript 호출
-  Future<void> _handleProfileUploadAndNotifyWeb() async {
-    // 1. ProfileService를 호출하여 서버로부터 새로운 URL을 'newUrl' 변수에 저장
-    String? newUrl = await _profileService?.uploadProfileImage();
-
-
-    if (newUrl != null) {
-      // 2. 서버에서 받은 새 URL을 Flutter 상태 변수에 저장하고 화면 갱신
-      setState(() {
-        isLoggedIn = true; // 로그인 상태 보장 (선택적)
-        profileImageUrl = newUrl; // 👈 여기에서 URL을 최종적으로 받아서 저장
-      });
-
-      // 3. (선택적) 웹뷰 내부의 HTML 이미지도 갱신하도록 JavaScript 호출
-      controller.runJavaScript("updateProfileImage('$newUrl');");
-    } else {
-      controller.runJavaScript("handleUploadFailure('업로드 실패');");
-    }
-  }
-
-  //프로필 이미지를 가져오는 API 함수
-  Future<String?> fetchProfileImage(int userId) async {
-    final url = Uri.parse(
-      "http://10.0.2.2:9090/api/profile/image/$userId",
-    );
-
-    final response = await http.get(url);
-
-    if (response.statusCode == 200) {
-      String imagePath = response.body.trim();
-      if (imagePath.isEmpty || imagePath.toLowerCase() == 'default.png') {
-        // 기본 이미지 파일명('default.png')을 받았거나, 유효하지 않은 경우
-        return null;
-      }
-      if (imagePath.startsWith('/')) {
-        imagePath = imagePath.substring(1);
+      if (cookie.startsWith('"') && cookie.endsWith('"')) {
+        cookie = cookie.substring(1, cookie.length - 1);
       }
 
-      return _baseUrl + imagePath;
+      final parts = cookie.split(';');
+      for (final p in parts) {
+        final t = p.trim();
+        if (t.startsWith("SESSION=")) {
+          return t.substring(8);
+        }
+        if (t.startsWith("JSESSIONID=")) {
+          return t.substring(11);
+        }
+      }
+    } catch (e) {
+      debugPrint("cookie parse error: $e");
     }
     return null;
   }
 
-  //-----------새로고침---------------
-  Future<void> _refreshWebView() async {
-    await controller.reload();
+  // -------------------- page finish ----------------------------
+  Future<void> _onPageFinished(String url) async {
+    setState(() => _isLoading = false);
+
+    await _injectJS();
+
+    final sid = await _extractSession();
+    if (sid == null) {
+      _sessionId = null;
+      _profileService = null;
+
+      setState(() {
+        _isLoggedIn = false;
+        _profileImageUrl = null;
+      });
+      return;
+    }
+
+    _sessionId = sid;
+
+    if (_profileService == null) {
+      _profileService = ProfileService(
+        baseUrl: baseUrl,
+        currentUserId: "1",
+        jsessionId: sid,
+      );
+    } else {
+      _profileService!.updateSession(sid);
+    }
+
+    await _checkAuth();
   }
 
+  // -------------------- inject JS ----------------------------
+  Future<void> _injectJS() async {
+    await _controller.runJavaScript("""
+      window.updateProfileImage = function(url){
+        const img = document.getElementById("profile-img");
+        if(img){
+          img.src = url;
+          img.removeAttribute('srcset');
+        }
+      };
+    """);
+  }
+
+  // -------------------- JS messages ----------------------------
+  void _onJsMessage(JavaScriptMessage msg) {
+    if (msg.message == "upload_start") {
+      _handleUpload();
+    }
+    if (msg.message == "logout_success") {
+      _handleLogout();
+    }
+  }
+
+  // -------------------- check auth ----------------------------
+  Future<void> _checkAuth() async {
+    if (_profileService == null) return;
+
+    final resp = await _profileService!.checkAuth();
+
+    if (resp["isAuthenticated"] == true) {
+      final img = resp["profileImageUrl"];
+      final cacheUrl = "$img?t=${DateTime.now().millisecondsSinceEpoch}";
+      setState(() {
+        _isLoggedIn = true;
+        _profileImageUrl = cacheUrl;
+      });
+    } else {
+      setState(() {
+        _isLoggedIn = false;
+        _profileImageUrl = null;
+      });
+    }
+  }
+
+  // -------------------- upload ----------------------------
+  Future<void> _handleUpload() async {
+    final sid = await _extractSession();
+    if (sid == null) {
+      await _controller.runJavaScript(
+        "handleUploadFailure('세션이 만료되었습니다. 다시 로그인 해주세요.');",
+      );
+      return;
+    }
+
+    _profileService!.updateSession(sid);
+
+    final newUrl = await _profileService!.uploadProfileImage();
+    if (newUrl == null) {
+      await _controller.runJavaScript(
+        "handleUploadFailure('업로드 실패');",
+      );
+      return;
+    }
+
+    final cacheUrl = "$newUrl?t=${DateTime.now().millisecondsSinceEpoch}";
+
+    setState(() => _profileImageUrl = cacheUrl);
+
+    await _controller.runJavaScript("updateProfileImage('$cacheUrl');");
+  }
+
+  void _handleLogout() {
+    setState(() {
+      _isLoggedIn = false;
+      _profileImageUrl = null;
+      _sessionId = null;
+      _profileService = null;
+    });
+  }
+
+  // -------------------- back ----------------------------
+  Future<void> _handleBack() async {
+    if (await _controller.canGoBack()) {
+      _controller.goBack();
+    } else {
+      SystemNavigator.pop();
+    }
+  }
+
+  // ---------------------- UI ----------------------
   @override
   Widget build(BuildContext context) {
-    return PopScope(
-      canPop: false,
-      onPopInvoked: (didPop) async {
-        if (!didPop) _handleBack();
+    return WillPopScope(
+      onWillPop: () async {
+        await _handleBack();
+        return false;
       },
       child: Scaffold(
         appBar: AppBar(
           toolbarHeight: 0,
           backgroundColor: const Color(0xFF040F16),
         ),
-
         body: Stack(
           children: [
-            // ----------- 웹뷰 -----------
-            WebViewWidget(controller: controller),
-            // ----------- 페이지 로딩 표시 (드래그 방해 X) -----------
+            WebViewWidget(controller: _controller),
             if (_isLoading)
               const Positioned.fill(
                 child: IgnorePointer(
@@ -255,68 +241,38 @@ class _SpringWebViewPageState extends State<SpringWebViewPage> {
                   ),
                 ),
               ),
-
-            // ----------- Edge Swipe Back (왼쪽 20px) -----------
-            Positioned(
-              top: 0,
-              bottom: 0,
-              left: 0,
-              width: 20,
-              child: GestureDetector(
-                behavior: HitTestBehavior.translucent,
-                onPanUpdate: (details) {
-                  if (details.delta.dx > 8) {
-                    _handleBack();
-                  }
-                },
-              ),
-            ),
           ],
         ),
-
-        // ----------- 하단 네비게이션 바 -----------
         bottomNavigationBar: BottomAppBar(
           color: const Color(0xFF040F16),
-          height: 60.0,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              //홈버튼
-              IconButton(
-                icon: const Icon(Icons.home, color: Colors.white),
-                onPressed: _handleHome,
-              ),
-              isLoggedIn &&
-                      profileImageUrl !=
-                          null // 👈 로그인 상태 체크
-                  ? GestureDetector(
-                      onTap: _myPageLogin,
-                      child: CircleAvatar(
-                        radius: 20, // 아이콘 크기와 비슷하도록 radius 설정
-                        backgroundImage: NetworkImage(profileImageUrl!),
-                        backgroundColor: Colors.white, // 로드 전/실패 시 배경색
-                      ),
-                    )
-                  : IconButton(
-                      icon: const Icon(
-                        Icons.people_alt_rounded,
-                        color: Colors.white,
-                      ),
-                      onPressed: _myPageLogin,
-                    ),
-              IconButton(
-                icon: const Icon(Icons.refresh, color: Colors.white),
-                onPressed: _refreshWebView,
-              ),
-            ],
+          child: SizedBox(
+            height: 60,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.home, color: Colors.white),
+                  onPressed: () => _controller.loadRequest(Uri.parse(homeUrl)),
+                ),
+
+                IconButton(
+                  icon: const Icon(
+                    Icons.people_alt_rounded,
+                    color: Colors.white,
+                  ),
+                  onPressed: () =>
+                      _controller.loadRequest(Uri.parse(myPageLoginUrl)),
+                ),
+
+                IconButton(
+                  icon: const Icon(Icons.refresh, color: Colors.white),
+                  onPressed: () => _controller.reload(),
+                ),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
-}
-Future<String?> extractJsessionid(WebViewController controller) async {
-  // 쿠키를 가져올 도메인 주소 (로그인된 웹뷰의 주소)
-  final uri = Uri.parse("http://10.0.2.2:9090");
-  return null;
 }
