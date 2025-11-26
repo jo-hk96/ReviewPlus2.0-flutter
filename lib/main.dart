@@ -1,16 +1,16 @@
-import 'package:flutter/foundation.dart';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:webview_flutter/webview_flutter.dart';
-import 'package:dio/dio.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:flutter/services.dart';
 import 'SplashPage.dart';
+import 'ProfileService.dart';
 import 'dart:convert';
 
-const String mainHome = 'http://192.168.0.53:9090/';
-const String _baseUrl = 'http://192.168.0.53:9090/';
-const String myPageLogin = 'http://192.168.0.53:9090/UserMypage';
+const String mainHome = 'http://10.0.2.2:9090/';
+const String _baseUrl = 'http://10.0.2.2:9090/';
+const String myPageLogin = 'http://10.0.2.2:9090/UserMypage';
 const int _currentUserId = 1;
 
 void main() {
@@ -36,68 +36,6 @@ class MyApp extends StatelessWidget {
   }
 }
 
-// ---------------------- Profile Service ----------------------
-class ProfileService {
-  final Dio _dio = Dio();
-  final String _baseUrl;
-  final String _currentUserId;
-
-  // 생성자를 통해 주입받는 것을 권장합니다.
-  ProfileService({required String baseUrl, required String currentUserId})
-    : _baseUrl = baseUrl,
-      _currentUserId = currentUserId;
-
-  Future<String?> uploadProfileImage() async {
-    final String uploadUrl = "$_baseUrl/api/profile/upload/";
-
-    final ImagePicker picker = ImagePicker();
-    final XFile? image = await picker.pickImage(source: ImageSource.gallery);
-
-    if (image == null) return null;
-
-    try {
-      // 1. FormData 생성: 서버에서 file과 userId를 기대한다고 가정
-      FormData formData = FormData.fromMap({
-        "file": await MultipartFile.fromFile(
-          image.path,
-          filename: image.name, // XFile.name이 더 정확합니다.
-        ),
-      });
-
-      Response response = await _dio.post(uploadUrl, data: formData);
-
-      if (response.statusCode == 200 && response.data != null) {
-        final responseData = response.data;
-        // 2. 응답 데이터 처리 개선: Dio가 String으로 반환할 경우 JSON 파싱 시도
-        if (responseData is Map<String, dynamic> &&
-            responseData['success'] == true) {
-          if (responseData.containsKey('newImageUrl')) {
-            return responseData['newImageUrl'] as String?;
-          }
-        }
-        // success: false 이거나 필수 키가 없을 경우
-        print('서버 응답에 문제가 있습니다: $responseData');
-        return null;
-      } else {
-        // 4. HTTP 상태 코드가 200이 아닐 경우 (예: 401, 500 등)
-        print('서버 응답 오류: 상태 코드 ${response.statusCode}, 데이터: ${response.data}');
-        return null;
-      }
-
-      // 4. HTTP 상태 코드가 200이 아닐 경우
-      print('서버 응답 오류: 상태 코드 ${response.statusCode}');
-      return null;
-    } on DioException catch (e) {
-      // Dio 특정 에러 처리 (네트워크 오류, 타임아웃 등)
-      print('Dio 업로드 에러: ${e.message}, 응답: ${e.response?.data}');
-      return null;
-    } catch (e) {
-      // 기타 예상치 못한 에러
-      print('일반 업로드 에러: $e');
-      return null;
-    }
-  }
-}
 
 // ---------------------- WebView Page ----------------------
 class SpringWebViewPage extends StatefulWidget {
@@ -111,18 +49,15 @@ class SpringWebViewPage extends StatefulWidget {
 
 class _SpringWebViewPageState extends State<SpringWebViewPage> {
   late final WebViewController controller;
-  final ProfileService _profileService = ProfileService(
-    baseUrl: 'http://192.168.0.53:9090/',
-    currentUserId: '1',
-  );
+  ProfileService? _profileService; // 👈 널러블로 선언하고 나중에 초기화
+  final String _baseUrl = 'http://10.0.2.2:9090'; // baseUrl은 상수로 빼서 관리
 
+  final CookieManager _cookieManager = CookieManager();
   void _handleLogout() {
     setState(() {
       isLoggedIn = false;
       profileImageUrl = null;
     });
-    // (선택 사항: 로그아웃 후 홈으로 돌아가게 하려면)
-    // _handleHome();
   }
 
   bool _isLoading = true;
@@ -131,14 +66,29 @@ class _SpringWebViewPageState extends State<SpringWebViewPage> {
   @override
   void initState() {
     super.initState();
-
     controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(const Color(0x00000000))
       ..setNavigationDelegate(
         NavigationDelegate(
           onPageStarted: (_) => setState(() => _isLoading = true),
-          onPageFinished: (_) => setState(() => _isLoading = false),
+
+            onPageFinished: (String url) async {
+              setState(() => _isLoading = false);
+              final String? extractedJsessionID = await extractJsessionid(controller);
+              if (extractedJsessionID != null && _profileService == null) {
+              _profileService = ProfileService(
+              baseUrl: _baseUrl,
+              currentUserId: '1', // 실제 userId로 대체해야 합니다.
+              jsessionId: extractedJsessionID, // 추출된 쿠키 주입
+              );
+              print('>>> ProfileService 초기화 완료! JSESSIONID: $extractedJsessionID');
+              }
+            },
+          onWebResourceError: (error) {
+            print('*** WebView Resource Error: ${error.errorCode} - ${error.description}');
+            setState(() => _isLoading = false); // 에러가 나면 로딩을 꺼줘야 합니다.
+          },
         ),
       )
       ..addJavaScriptChannel(
@@ -161,8 +111,8 @@ class _SpringWebViewPageState extends State<SpringWebViewPage> {
 
   //사용자 상태
   Future<void> _fetchUserStatus() async {
-    // 1. ⭐️ Spring의 세션 유효성 검사 API 호출
-    final authCheckUrl = Uri.parse("$_baseUrl/api/user/check-auth");
+    // Spring의 세션 유효성 검사 API 호출
+    final authCheckUrl = Uri.parse("${_baseUrl}api/user/check-auth");
     final authResponse = await http.get(authCheckUrl);
 
     if (authResponse.statusCode == 200) {
@@ -179,7 +129,6 @@ class _SpringWebViewPageState extends State<SpringWebViewPage> {
         return;
       }
     }
-
     // 3. 인증 실패 또는 API 오류 시 (로그아웃 상태로 초기화)
     setState(() {
       isLoggedIn = false;
@@ -233,7 +182,8 @@ class _SpringWebViewPageState extends State<SpringWebViewPage> {
   // 프로필 업로드 → Javascript 호출
   Future<void> _handleProfileUploadAndNotifyWeb() async {
     // 1. ProfileService를 호출하여 서버로부터 새로운 URL을 'newUrl' 변수에 저장
-    String? newUrl = await _profileService.uploadProfileImage();
+    String? newUrl = await _profileService?.uploadProfileImage();
+
 
     if (newUrl != null) {
       // 2. 서버에서 받은 새 URL을 Flutter 상태 변수에 저장하고 화면 갱신
@@ -252,7 +202,7 @@ class _SpringWebViewPageState extends State<SpringWebViewPage> {
   //프로필 이미지를 가져오는 API 함수
   Future<String?> fetchProfileImage(int userId) async {
     final url = Uri.parse(
-      "http://192.168.0.53:9090/api/profile/image/$userId",
+      "http://10.0.2.2:9090/api/profile/image/$userId",
     );
 
     final response = await http.get(url);
@@ -272,7 +222,7 @@ class _SpringWebViewPageState extends State<SpringWebViewPage> {
     return null;
   }
 
-  //-------새로고침---------------
+  //-----------새로고침---------------
   Future<void> _refreshWebView() async {
     await controller.reload();
   }
@@ -364,4 +314,9 @@ class _SpringWebViewPageState extends State<SpringWebViewPage> {
       ),
     );
   }
+}
+Future<String?> extractJsessionid(WebViewController controller) async {
+  // 쿠키를 가져올 도메인 주소 (로그인된 웹뷰의 주소)
+  final uri = Uri.parse("http://10.0.2.2:9090");
+  return null;
 }
