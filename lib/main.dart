@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import 'profile_service.dart';
+import 'SplashPage.dart';
 
 const String baseUrl = 'http://10.0.2.2:9090';
 const String homeUrl = '$baseUrl/';
@@ -21,8 +22,12 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'ReviewPlus 2.0',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(primarySwatch: Colors.blue),
-      home: const SpringWebViewPage(url: homeUrl),
+      home: const SplashPage(
+        backgroundColor: Color(0xFF1E1E1E),
+        logoPath: 'assets/logo.png', // 원하는 이미지 위치
+      ),
     );
   }
 }
@@ -151,6 +156,8 @@ class _SpringWebViewPageState extends State<SpringWebViewPage> {
 
   // -------------------- check auth ----------------------------
   Future<void> _checkAuth() async {
+
+
     if (_profileService == null) return;
 
     final resp = await _profileService!.checkAuth();
